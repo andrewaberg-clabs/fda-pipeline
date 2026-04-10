@@ -308,6 +308,20 @@ def _parse_pdufa_tables(html: str) -> list[dict]:
     return rows
 
 
+def _dump_html_on_parse_failure(cfg: dict, html: str, label: str) -> Path | None:
+    """Save raw HTML bytes to disk for offline diagnosis when the table parser
+    returns zero rows. Distinct from ``_dump_raw`` (which writes parsed dicts)."""
+    try:
+        data_dir = Path(cfg["paths"]["data_dir"])
+        data_dir.mkdir(parents=True, exist_ok=True)
+        out = data_dir / f"raw_{label}_html_{date.today().isoformat()}.html"
+        out.write_text(html, encoding="utf-8")
+        return out
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("failed to save raw %s HTML: %s", label, e)
+        return None
+
+
 async def fetch_pdufa_page(cfg: dict) -> list[dict]:
     url = cfg["sources"]["pdufa"]["pdufa_url"]
     timeout = httpx.Timeout(float(cfg["http"]["timeout_seconds"]))
@@ -322,10 +336,12 @@ async def fetch_pdufa_page(cfg: dict) -> list[dict]:
     rows = _parse_pdufa_tables(html)
     log.info("pdufa page parsed: %d rows", len(rows))
     if not rows:
+        dump_path = _dump_html_on_parse_failure(cfg, html, "pdufa")
         log.warning(
             "pdufa page returned %d bytes of HTML but 0 parseable rows — "
-            "table structure may have changed. Raw HTML dumped to data/raw_pdufa_*.json",
+            "table structure may have changed. Raw HTML saved to %s",
             len(html),
+            dump_path,
         )
     return rows
 
@@ -343,6 +359,14 @@ async def fetch_approvals_page(cfg: dict) -> list[dict]:
             return []
     rows = _parse_pdufa_tables(html)
     log.info("approvals page parsed: %d rows", len(rows))
+    if not rows:
+        dump_path = _dump_html_on_parse_failure(cfg, html, "approvals")
+        log.warning(
+            "approvals page returned %d bytes of HTML but 0 parseable rows — "
+            "table structure may have changed. Raw HTML saved to %s",
+            len(html),
+            dump_path,
+        )
     return rows
 
 
