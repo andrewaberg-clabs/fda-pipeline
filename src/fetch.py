@@ -159,7 +159,9 @@ async def fetch_openfda_drugsfda(cfg: dict, lookback_days: int) -> list[dict]:
     start = (today - timedelta(days=lookback_days)).strftime("%Y%m%d")
     end = today.strftime("%Y%m%d")
     # openFDA uses Lucene-style ranges; brackets are inclusive.
-    search = f"submissions.submission_status_date:[{start}+TO+{end}]"
+    # Use spaces around TO so httpx encodes them as '+' (Lucene's expected form);
+    # literal '+' would be re-encoded as %2B and the server returns 500.
+    search = f"submissions.submission_status_date:[{start} TO {end}]"
 
     results: list[dict] = []
     timeout = httpx.Timeout(float(cfg["http"]["timeout_seconds"]))
@@ -206,14 +208,41 @@ async def fetch_openfda_drugsfda(cfg: dict, lookback_days: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 COLUMN_ALIASES: dict[str, list[str]] = {
-    "drug_name": ["drug", "proprietary", "brand", "tradename", "product"],
-    "generic_name": ["generic", "established", "active ingredient", "nonproprietary"],
-    "applicant": ["applicant", "sponsor", "company"],
+    "drug_name": ["drug", "proprietary", "brand", "tradename", "product", "catalyst"],
+    "generic_name": [
+        "generic",
+        "established",
+        "active ingredient",
+        "nonproprietary",
+        "drug class",
+    ],
+    "applicant": ["applicant", "sponsor", "company", "ticker"],
     "nda_bla_number": ["application", "nda", "bla", "app number"],
-    "submission_type": ["type", "submission"],
-    "pdufa_date": ["pdufa", "target action", "goal date", "action date"],
-    "indication": ["indication", "proposed indication", "use"],
+    "submission_type": ["type", "submission", "stage"],
+    "pdufa_date": [
+        "pdufa",
+        "target action",
+        "goal date",
+        "action date",
+        "catalyst date",
+        "date",
+    ],
+    "indication": ["indication", "proposed indication", "use", "disease"],
     "submission_date": ["submission date", "received", "filed"],
+}
+
+
+# Browser-like headers for third-party calendar scrapes (e.g. BioPharmCatalyst),
+# which reject the config's plain bot User-Agent. Only used by the PDUFA/approval
+# HTML scrapers — openFDA and ClinicalTrials.gov still use the config UA.
+_BROWSER_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -282,8 +311,9 @@ def _parse_pdufa_tables(html: str) -> list[dict]:
 async def fetch_pdufa_page(cfg: dict) -> list[dict]:
     url = cfg["sources"]["pdufa"]["pdufa_url"]
     timeout = httpx.Timeout(float(cfg["http"]["timeout_seconds"]))
-    headers = {"User-Agent": cfg["http"]["user_agent"]}
-    async with httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout, headers=_BROWSER_HEADERS, follow_redirects=True
+    ) as client:
         try:
             html = await _get_text(client, url, cfg)
         except _RETRYABLE_EXC as e:
@@ -291,14 +321,21 @@ async def fetch_pdufa_page(cfg: dict) -> list[dict]:
             return []
     rows = _parse_pdufa_tables(html)
     log.info("pdufa page parsed: %d rows", len(rows))
+    if not rows:
+        log.warning(
+            "pdufa page returned %d bytes of HTML but 0 parseable rows — "
+            "table structure may have changed. Raw HTML dumped to data/raw_pdufa_*.json",
+            len(html),
+        )
     return rows
 
 
 async def fetch_approvals_page(cfg: dict) -> list[dict]:
     url = cfg["sources"]["pdufa"]["approvals_url"]
     timeout = httpx.Timeout(float(cfg["http"]["timeout_seconds"]))
-    headers = {"User-Agent": cfg["http"]["user_agent"]}
-    async with httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout, headers=_BROWSER_HEADERS, follow_redirects=True
+    ) as client:
         try:
             html = await _get_text(client, url, cfg)
         except _RETRYABLE_EXC as e:

@@ -37,6 +37,10 @@ sources:
     page_size: 100
 
   pdufa:
-    pdufa_url: "https://www.fda.gov/drugs/new-drugs-fda-cders-new-molecular-entities-and-new-therapeutic-biological-products/pdufa-dates"
-    approvals_url: "https://www.fda.gov/drugs/nda-and-bla-approvals"
+    # FDA.gov does not publish a forward-looking PDUFA calendar. BioPharmCatalyst
+    # maintains the most comprehensive public PDUFA/FDA calendar; their HTML pages
+    # are server-rendered (see github.com/criminosis/fda-calendar-scraper for a
+    # working reference implementation).
+    pdufa_url: "https://www.biopharmcatalyst.com/calendars/pdufa-calendar"
+    approvals_url: "https://www.biopharmcatalyst.com/calendars/fda-calendar"
     rss_fallback_url: "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"
