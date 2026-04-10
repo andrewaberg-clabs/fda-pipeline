@@ -1,0 +1,9 @@
+httpx[http2]~=0.27.0
+beautifulsoup4~=4.12.3
+lxml~=5.2.0
+thefuzz[speedup]~=0.22.1
+python-Levenshtein~=0.25.0
+pyyaml~=6.0.1
+python-dateutil~=2.9.0
+click~=8.1.7
+tenacity~=8.2.3

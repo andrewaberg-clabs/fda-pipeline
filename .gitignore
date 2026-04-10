@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Pipeline outputs (generated on each run)
+data/raw_*.json
+reports/*.md
+reports/*.json
+logs/*.log
+
+# PDUFA calendar is machine-generated state; keep local only
+data/pdufa_calendar.json
