@@ -437,19 +437,15 @@ async def _fetch_all_async(cfg: dict, dry_run: bool = False) -> dict:
 
     ct_task = _safe(fetch_clinical_trials(cfg, lookback), "clinicaltrials")
     of_task = _safe(fetch_openfda_drugsfda(cfg, lookback), "openfda")
-    pdufa_task = _safe(fetch_pdufa_page(cfg), "pdufa_page")
 
-    ct, openfda_results, pdufa_rows = await asyncio.gather(ct_task, of_task, pdufa_task)
+    # TODO(pdufa): source disabled — BioPharmCatalyst is a JS-rendered SPA and
+    # fda.gov has no forward-looking PDUFA page. Re-enable here by restoring a
+    # fetch_pdufa_page(cfg) task once a replacement source is wired up (EDGAR
+    # 8-K, PRNewswire RSS, or a manual YAML watchlist — see plan file Phase 2).
+    log.info("pdufa source disabled — see TODO(pdufa) in src/fetch.py")
 
-    # Fallback chain for PDUFA if primary page returned nothing.
-    if not pdufa_rows:
-        warnings.append("PDUFA primary scrape returned 0 rows; trying approvals page")
-        pdufa_rows = await _safe(fetch_approvals_page(cfg), "pdufa_approvals")
-    if not pdufa_rows:
-        warnings.append("PDUFA approvals page returned 0 rows; trying RSS")
-        pdufa_rows = await _safe(fetch_fda_press_rss(cfg), "pdufa_rss")
-    if not pdufa_rows:
-        warnings.append("PDUFA data may be stale — all scrape sources returned 0 rows")
+    ct, openfda_results = await asyncio.gather(ct_task, of_task)
+    pdufa_rows: list[dict] = []
 
     _dump_raw(cfg, "clinicaltrials", ct)
     _dump_raw(cfg, "openfda", openfda_results)

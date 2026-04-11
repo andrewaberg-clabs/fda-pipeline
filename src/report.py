@@ -348,14 +348,9 @@ def _write_markdown(
     md += f"**Lookback:** {lookback} days | **Lookahead:** {lookahead} days\n"
     md += f"**Filters:** {', '.join(filters) if filters else 'none'}\n\n"
 
-    stale = any("stale" in w.lower() or "scrape" in w.lower() for w in warnings)
-    if stale:
-        md += "> ⚠️ **PDUFA data may be stale** — one or more scrape sources returned 0 rows. "
-        md += "Calendar reflects the most recent successful run.\n\n"
-
     md += _render_exec_summary(clusters, calendar)
     md += "## 2. Pipeline Overview\n\n_See sections below for per-phase tables._\n\n"
-    md += _render_pdufa_calendar(calendar, 90, "Next 90 Days")
+    md += _render_pdufa_calendar(calendar, 90, "Disabled (see docs)")
     md += _render_watchlist(clusters)
     md += _render_gap_alerts(clusters)
     md += _render_new_approvals(clusters)
