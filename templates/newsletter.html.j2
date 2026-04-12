@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FDA Pipeline Weekly — {{ run_date }}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;">
+<tr><td align="center" style="padding:24px 16px;">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;">
+
+  <!-- Header -->
+  <tr>
+    <td style="background-color:#1a365d;padding:24px 32px;">
+      <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;">FDA Pipeline Weekly</h1>
+      <p style="margin:4px 0 0;color:#a0c4e8;font-size:14px;">{{ run_date }}</p>
+    </td>
+  </tr>
+
+  <!-- Opening -->
+  <tr>
+    <td style="padding:24px 32px 16px;">
+      <p style="margin:0;font-size:16px;line-height:1.6;color:#2d3748;">{{ narrative.opening }}</p>
+    </td>
+  </tr>
+
+  <!-- Key Approvals -->
+  <tr>
+    <td style="padding:8px 32px 16px;">
+      <h2 style="margin:0 0 12px;font-size:18px;color:#1a365d;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">Key Approvals</h2>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#4a5568;">{{ narrative.approvals }}</p>
+      {% if approvals %}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+        <tr style="background-color:#edf2f7;">
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Date</td>
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Drug</td>
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Sponsor</td>
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Area</td>
+        </tr>
+        {% for a in approvals %}
+        <tr style="border-bottom:1px solid #e2e8f0;">
+          <td style="padding:8px 12px;color:#4a5568;">{{ a.approval_date or '' }}</td>
+          <td style="padding:8px 12px;color:#2d3748;font-weight:500;">{{ a.drug_name or '' }}</td>
+          <td style="padding:8px 12px;color:#4a5568;">{{ a.sponsor or '' }}</td>
+          <td style="padding:8px 12px;color:#4a5568;">{{ a.therapeutic_area or '' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </td>
+  </tr>
+
+  <!-- Pipeline Highlights -->
+  <tr>
+    <td style="padding:8px 32px 16px;">
+      <h2 style="margin:0 0 12px;font-size:18px;color:#1a365d;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">Pipeline Highlights</h2>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#4a5568;">{{ narrative.pipeline }}</p>
+    </td>
+  </tr>
+
+  <!-- What to Watch -->
+  <tr>
+    <td style="padding:8px 32px 16px;">
+      <h2 style="margin:0 0 12px;font-size:18px;color:#1a365d;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">What to Watch</h2>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#4a5568;">{{ narrative.watch }}</p>
+      {% if high_signal %}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+        <tr style="background-color:#edf2f7;">
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Drug</td>
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Sponsor</td>
+          <td style="padding:8px 12px;font-weight:600;color:#2d3748;">Sources</td>
+        </tr>
+        {% for c in high_signal %}
+        <tr style="border-bottom:1px solid #e2e8f0;">
+          <td style="padding:8px 12px;color:#2d3748;font-weight:500;">{{ c.canonical_name or '' }}</td>
+          <td style="padding:8px 12px;color:#4a5568;">{{ c.canonical_sponsor or '' }}</td>
+          <td style="padding:8px 12px;color:#4a5568;">{{ c.sources | join(', ') }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </td>
+  </tr>
+
+  <!-- By the Numbers -->
+  <tr>
+    <td style="padding:8px 32px 24px;">
+      <h2 style="margin:0 0 12px;font-size:18px;color:#1a365d;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">By the Numbers</h2>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;">
+        <tr><td style="padding:4px 16px 4px 0;color:#718096;">ClinicalTrials.gov records</td><td style="padding:4px 0;color:#2d3748;font-weight:600;">{{ source_counts.clinicaltrials | default(0) }}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#718096;">openFDA approvals</td><td style="padding:4px 0;color:#2d3748;font-weight:600;">{{ source_counts.openfda | default(0) }}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#718096;">Total clusters</td><td style="padding:4px 0;color:#2d3748;font-weight:600;">{{ total_clusters }}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#718096;">Multi-source matches</td><td style="padding:4px 0;color:#2d3748;font-weight:600;">{{ high_signal | length }}</td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Footer -->
+  <tr>
+    <td style="background-color:#f7fafc;padding:16px 32px;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;font-size:12px;color:#a0aec0;text-align:center;">
+        Generated by FDA Pipeline Tracker | {{ run_date }}
+      </p>
+    </td>
+  </tr>
+
+</table>
+
+</td></tr>
+</table>
+
+</body>
+</html>

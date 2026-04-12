@@ -13,6 +13,8 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+
 
 # ---------------------------------------------------------------------------
 # CSV export
@@ -94,23 +96,17 @@ def generate_content(report_path: str, cfg: dict) -> dict[str, Path]:
     if content_cfg.get("csv", {}).get("enabled", True):
         paths["csv"] = _generate_csv(report, output_dir)
 
-    # Newsletter (requires LLM — added in Commit 2)
+    # Newsletter (requires LLM + jinja2)
     if content_cfg.get("newsletter", {}).get("enabled", True):
         try:
-            from .llm import generate_newsletter_narrative
             paths["newsletter"] = _generate_newsletter(report, output_dir, cfg)
-        except ImportError:
-            log.info("newsletter generation skipped — llm module not yet available")
         except Exception as e:  # noqa: BLE001
             log.warning("newsletter generation failed: %s", e)
 
-    # LinkedIn (requires LLM — added in Commit 3)
+    # LinkedIn (requires LLM)
     if content_cfg.get("linkedin", {}).get("enabled", True):
         try:
-            from .llm import generate_linkedin_posts
             paths["linkedin"] = _generate_linkedin(report, output_dir, cfg)
-        except ImportError:
-            log.info("linkedin generation skipped — llm module not yet available")
         except Exception as e:  # noqa: BLE001
             log.warning("linkedin generation failed: %s", e)
 
@@ -118,10 +114,68 @@ def generate_content(report_path: str, cfg: dict) -> dict[str, Path]:
 
 
 def _generate_newsletter(report: dict, output_dir: Path, cfg: dict) -> Path:
-    """Generate HTML newsletter. Implemented in Commit 2."""
-    raise NotImplementedError("newsletter generation not yet implemented")
+    """Generate HTML newsletter using LLM narrative + Jinja2 template."""
+    from .llm import generate_newsletter_narrative
+
+    run_date = report.get("run_date", date.today().isoformat())
+
+    # Get LLM narrative (or fallback to empty strings)
+    narrative = generate_newsletter_narrative(report, cfg)
+    if not narrative:
+        narrative = {
+            "opening": "This week's FDA pipeline data is available below.",
+            "approvals": "See the approvals table for details.",
+            "pipeline": "See the full report for trial status details.",
+            "watch": "See the high-signal matches table below.",
+        }
+
+    # Extract data for template tables
+    approvals = []
+    high_signal = []
+    for c in report.get("clusters", []):
+        flags = c.get("flags", {})
+        if flags.get("high_signal"):
+            high_signal.append(c)
+        for rec in c.get("records", []):
+            if rec.get("signal_type") == "new_approval":
+                approvals.append(rec)
+
+    # Render template
+    try:
+        from jinja2 import Environment, FileSystemLoader
+    except ImportError:
+        log.warning("jinja2 not installed — run: pip install jinja2")
+        raise
+
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    template = env.get_template("newsletter.html.j2")
+    html = template.render(
+        run_date=run_date,
+        narrative=narrative,
+        approvals=approvals[:20],
+        high_signal=high_signal[:15],
+        source_counts=report.get("source_counts", {}),
+        total_clusters=len(report.get("clusters", [])),
+    )
+
+    out = output_dir / f"newsletter_{run_date}.html"
+    out.write_text(html, encoding="utf-8")
+    log.info("wrote newsletter: %s", out)
+    return out
 
 
 def _generate_linkedin(report: dict, output_dir: Path, cfg: dict) -> Path:
-    """Generate LinkedIn posts. Implemented in Commit 3."""
-    raise NotImplementedError("linkedin generation not yet implemented")
+    """Generate LinkedIn post drafts as JSON."""
+    from .llm import generate_linkedin_posts as llm_linkedin
+
+    run_date = report.get("run_date", date.today().isoformat())
+    posts = llm_linkedin(report, cfg)
+
+    if posts is None:
+        posts = []
+        log.info("linkedin: no posts generated (LLM unavailable)")
+
+    out = output_dir / f"linkedin_{run_date}.json"
+    out.write_text(json.dumps(posts, indent=2), encoding="utf-8")
+    log.info("wrote linkedin posts: %s (%d posts)", out, len(posts))
+    return out
