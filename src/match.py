@@ -69,6 +69,29 @@ _SALT_SUFFIXES = [
     " succinate",
 ]
 
+_DOSAGE_SUFFIXES = [
+    " for injection",
+    " for oral suspension",
+    " for inhalation",
+    " injection",
+    " tablet",
+    " tablets",
+    " capsule",
+    " capsules",
+    " solution",
+    " suspension",
+    " cream",
+    " ointment",
+    " gel",
+    " patch",
+    " powder",
+    " spray",
+    " inhaler",
+    " ophthalmic",
+    " subcutaneous",
+    " intravenous",
+]
+
 
 def _canonicalize_name(name: Optional[str]) -> str:
     if not name:
@@ -76,6 +99,9 @@ def _canonicalize_name(name: Optional[str]) -> str:
     s = name.lower().strip()
     s = re.sub(r"\([^)]*\)", " ", s)  # drop parenthetical brand/generic pairs
     s = re.sub(r"\s+", " ", s).strip()
+    for suffix in _DOSAGE_SUFFIXES:
+        if s.endswith(suffix):
+            s = s[: -len(suffix)].strip()
     for salt in _SALT_SUFFIXES:
         if s.endswith(salt):
             s = s[: -len(salt)].strip()
@@ -174,21 +200,26 @@ def cluster_records(records: list[NormalizedRecord], threshold: int = 85) -> lis
     # Stage B: fuzzy collapse by canonical name
     for r in remaining:
         cname = _canonicalize_name(r.drug_name or r.generic_name or "")
-        if not cname:
+        # Also try the generic name separately — bridges brand↔generic across
+        # sources (e.g. CT.gov "pembrolizumab" vs openFDA "KEYTRUDA").
+        gname = _canonicalize_name(r.generic_name) if r.generic_name else None
+        if not cname and not gname:
             clusters.append(_new_cluster(r))
             continue
 
         best: Optional[MatchCluster] = None
         best_score = 0
         for c in clusters:
-            score = _best_cluster_score(cname, c)
+            score = _best_cluster_score(cname, c) if cname else 0
+            if gname and gname != cname:
+                score = max(score, _best_cluster_score(gname, c))
             if score > best_score:
                 best_score = score
                 best = c
 
         if best and best_score >= threshold:
             _merge_into(best, r, float(best_score))
-        elif best and (threshold - 5) <= best_score < threshold:
+        elif best and (threshold - 15) <= best_score < threshold:
             sponsor_score = fuzz.token_set_ratio(r.sponsor or "", best.canonical_sponsor or "")
             indication_score = fuzz.token_set_ratio(r.indication or "", _any_indication(best) or "")
             if sponsor_score >= 85 and indication_score >= 70:
