@@ -88,7 +88,7 @@ def run_pipeline(cfg: dict, dry_run: bool = False) -> Path:
     }
 
     # 2. Normalize
-    records = normalize.normalize_all(raw)
+    records = normalize.normalize_all(raw, lookback_days=int(cfg.get("lookback_days", 90)))
 
     # 3. Match
     threshold = int(cfg.get("fuzzy_threshold", 85))

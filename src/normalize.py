@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from dateutil import parser as dateparser
@@ -217,9 +217,13 @@ def normalize_clinical_trial(study: dict) -> Optional[NormalizedRecord]:
 # ---------------------------------------------------------------------------
 
 
-def normalize_openfda(result: dict) -> list[NormalizedRecord]:
+def normalize_openfda(result: dict, lookback_start: str | None = None) -> list[NormalizedRecord]:
     """One openFDA application may carry multiple submissions; emit a record per
-    approval (submission_status ``AP`` or ``TA``) within the relevant window.
+    approval (submission_status ``AP`` or ``TA``) within the lookback window.
+
+    *lookback_start* is an ISO date string (``YYYY-MM-DD``). Submissions whose
+    ``submission_status_date`` predates it are skipped — they're old approvals
+    on an application that was merely updated recently, not new actions.
     """
     out: list[NormalizedRecord] = []
     app_num_raw = result.get("application_number")
@@ -259,6 +263,8 @@ def normalize_openfda(result: dict) -> list[NormalizedRecord]:
         if status_code not in {"AP", "TA"}:
             continue
         approval_date = _parse_date(sub.get("submission_status_date"))
+        if lookback_start and approval_date and approval_date < lookback_start:
+            continue
         sub_type = _clean(sub.get("submission_type")) or submission_type
         rec = NormalizedRecord(
             source="openfda",
@@ -321,8 +327,11 @@ def normalize_pdufa(row: dict) -> Optional[NormalizedRecord]:
 # ---------------------------------------------------------------------------
 
 
-def normalize_all(raw: dict) -> list[NormalizedRecord]:
+def normalize_all(raw: dict, lookback_days: int | None = None) -> list[NormalizedRecord]:
     records: list[NormalizedRecord] = []
+    lookback_start: str | None = None
+    if lookback_days:
+        lookback_start = (date.today() - timedelta(days=lookback_days)).isoformat()
 
     for study in raw.get("ct", []) or []:
         try:
@@ -333,12 +342,14 @@ def normalize_all(raw: dict) -> list[NormalizedRecord]:
         if rec:
             records.append(rec)
 
+    openfda_raw_count = 0
     for result in raw.get("openfda", []) or []:
         try:
-            recs = normalize_openfda(result)
+            recs = normalize_openfda(result, lookback_start=lookback_start)
         except Exception as e:  # noqa: BLE001
             log.warning("normalize_openfda failed: %s", e)
             continue
+        openfda_raw_count += len(result.get("submissions", []) or [])
         records.extend(recs)
 
     for row in raw.get("pdufa", []) or []:
@@ -350,11 +361,19 @@ def normalize_all(raw: dict) -> list[NormalizedRecord]:
         if rec:
             records.append(rec)
 
+    openfda_kept = sum(1 for r in records if r.source == "openfda")
     log.info(
         "normalized %d records (ct=%d, openfda=%d, pdufa=%d)",
         len(records),
         sum(1 for r in records if r.source == "clinicaltrials"),
-        sum(1 for r in records if r.source == "openfda"),
+        openfda_kept,
         sum(1 for r in records if r.source == "pdufa"),
     )
+    if lookback_start and openfda_raw_count:
+        log.info(
+            "openfda date filter: %d total submissions → %d within lookback window (since %s)",
+            openfda_raw_count,
+            openfda_kept,
+            lookback_start,
+        )
     return records
