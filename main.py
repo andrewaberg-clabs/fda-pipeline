@@ -44,6 +44,7 @@ log = logging.getLogger("main")
 )
 @click.option("--dry-run", is_flag=True, help="Replay most recent cached raw JSON dumps (no network).")
 @click.option("--generate-content", is_flag=True, help="Generate CSV, newsletter, and LinkedIn content after the pipeline run.")
+@click.option("--content-only", is_flag=True, help="Skip the pipeline and regenerate content from the most recent report.")
 def cli(
     lookback_days,
     lookahead_days,
@@ -53,6 +54,7 @@ def cli(
     config_path,
     dry_run,
     generate_content,
+    content_only,
 ):
     """Run the full FDA pipeline tracker: fetch → normalize → match → enrich → report."""
     cfg = load_config(config_path)
@@ -68,6 +70,24 @@ def cli(
     )
 
     setup_logging(cfg["paths"]["logs_dir"])
+
+    # Content-only mode: skip pipeline, regenerate content from most recent report.
+    if content_only:
+        from src.content import find_latest_report, generate_content as gen_content
+
+        report_path = find_latest_report(cfg["paths"]["reports_dir"])
+        if report_path is None:
+            click.echo(
+                f"No reports found in {cfg['paths']['reports_dir']} — run the pipeline first.",
+                err=True,
+            )
+            sys.exit(1)
+        click.echo(f"Regenerating content from: {report_path}")
+        content_paths = gen_content(str(report_path), cfg)
+        for channel, path in content_paths.items():
+            click.echo(f"  {channel}: {path}")
+        return
+
     log.info("starting pipeline: lookback=%s lookahead=%s dry_run=%s",
              cfg.get("lookback_days"), cfg.get("lookahead_days"), dry_run)
 

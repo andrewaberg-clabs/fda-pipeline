@@ -179,3 +179,61 @@ def _generate_linkedin(report: dict, output_dir: Path, cfg: dict) -> Path:
     out.write_text(json.dumps(posts, indent=2), encoding="utf-8")
     log.info("wrote linkedin posts: %s (%d posts)", out, len(posts))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Standalone entrypoint
+# ---------------------------------------------------------------------------
+
+
+def find_latest_report(reports_dir: str | Path) -> Path | None:
+    """Return the newest ``fda_pipeline_*.json`` report, or None if none exist."""
+    rdir = Path(reports_dir)
+    candidates = sorted(rdir.glob("fda_pipeline_*.json"), reverse=True)
+    return candidates[0] if candidates else None
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """Regenerate content from an existing report without running the pipeline.
+
+    Usage:
+        python -m src.content                                  # most recent report
+        python -m src.content reports/fda_pipeline_YYYY-MM-DD.json
+    """
+    import argparse
+
+    from .config import load_config
+    from .logging_setup import setup_logging
+
+    parser = argparse.ArgumentParser(
+        prog="python -m src.content",
+        description="Regenerate CSV, newsletter, and LinkedIn content from a report.",
+    )
+    parser.add_argument("report", nargs="?", help="Path to JSON report (default: most recent).")
+    parser.add_argument("--config", default="config.yaml", help="Path to config file.")
+    args = parser.parse_args(argv)
+
+    cfg = load_config(args.config)
+    setup_logging(cfg["paths"]["logs_dir"])
+
+    if args.report:
+        report_path = Path(args.report)
+        if not report_path.exists():
+            log.error("report not found: %s", report_path)
+            return 1
+    else:
+        report_path = find_latest_report(cfg["paths"]["reports_dir"])
+        if report_path is None:
+            log.error("no reports found in %s — run the pipeline first", cfg["paths"]["reports_dir"])
+            return 1
+        log.info("using most recent report: %s", report_path)
+
+    paths = generate_content(str(report_path), cfg)
+    for channel, path in paths.items():
+        print(f"  {channel}: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_main())
