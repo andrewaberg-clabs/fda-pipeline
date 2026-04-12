@@ -23,3 +23,7 @@ logs/*.log
 
 # PDUFA calendar is machine-generated state; keep local only
 data/pdufa_calendar.json
+data/raw_*_html_*.html
+
+# Generated content (CSV, newsletter, LinkedIn posts)
+content/

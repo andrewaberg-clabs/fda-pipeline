@@ -17,6 +17,19 @@ http:
   backoff_base_seconds: 2
   user_agent: "fda-pipeline-tracker/0.1 (research)"
 
+content:
+  output_dir: content
+  csv:
+    enabled: true
+  newsletter:
+    enabled: true
+    subject: "FDA Pipeline Weekly — {date}"
+  linkedin:
+    enabled: true
+    max_posts: 5
+  llm:
+    model: "claude-sonnet-4-20250514"
+
 sources:
   clinicaltrials:
     base_url: "https://clinicaltrials.gov/api/v2/studies"

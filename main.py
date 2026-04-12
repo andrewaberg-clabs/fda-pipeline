@@ -43,6 +43,7 @@ log = logging.getLogger("main")
     show_default=True,
 )
 @click.option("--dry-run", is_flag=True, help="Replay most recent cached raw JSON dumps (no network).")
+@click.option("--generate-content", is_flag=True, help="Generate CSV, newsletter, and LinkedIn content after the pipeline run.")
 def cli(
     lookback_days,
     lookahead_days,
@@ -51,6 +52,7 @@ def cli(
     output_format,
     config_path,
     dry_run,
+    generate_content,
 ):
     """Run the full FDA pipeline tracker: fetch → normalize → match → enrich → report."""
     cfg = load_config(config_path)
@@ -76,6 +78,12 @@ def cli(
         sys.exit(1)
 
     click.echo(f"Report written: {report_path}")
+
+    if generate_content:
+        from src.content import generate_content as gen_content
+        content_paths = gen_content(str(report_path), cfg)
+        for channel, path in content_paths.items():
+            click.echo(f"  {channel}: {path}")
 
 
 def run_pipeline(cfg: dict, dry_run: bool = False) -> Path:
