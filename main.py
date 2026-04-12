@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from src import enrich, fetch, match, normalize, pdufa, report
+from src import diff, enrich, fetch, match, normalize, pdufa, report
 from src.config import load_config, merge_cli_overrides
 from src.logging_setup import setup_logging
 
@@ -101,7 +101,11 @@ def run_pipeline(cfg: dict, dry_run: bool = False) -> Path:
     openfda_records = [r for r in records if r.source == "openfda"]
     calendar = pdufa.sync_calendar(raw.get("pdufa", []), cfg, approvals=openfda_records)
 
-    # 6. Filter + Report
+    # 6. Run-over-run diff
+    prev_report = diff.load_previous_report(cfg["paths"]["reports_dir"])
+    delta = diff.compute_diff(prev_report, clusters)
+
+    # 7. Filter + Report
     filtered = enrich.apply_filters(clusters, cfg)
     return report.generate_report(
         filtered,
@@ -109,6 +113,7 @@ def run_pipeline(cfg: dict, dry_run: bool = False) -> Path:
         cfg,
         warnings=raw.get("warnings", []),
         source_counts=source_counts,
+        delta=delta,
     )
 
 

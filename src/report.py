@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .diff import DiffReport
 from .match import MatchCluster
 from .normalize import NormalizedRecord
 
@@ -112,6 +113,67 @@ def _render_exec_summary(clusters: list[MatchCluster], calendar: dict) -> str:
     )
     md += f"- **{high_signal}** high-signal clusters (present in 2+ sources)\n"
     md += f"- **{gap_alerts}** gap alerts (PDUFA passed with no visible FDA action)\n\n"
+    return md
+
+
+def _render_delta(delta: DiffReport) -> str:
+    if delta.is_first_run:
+        return "## 2. What Changed Since Last Run\n\n_First run — no prior report to compare against._\n\n"
+
+    md = f"## 2. What Changed Since Last Run (vs. {delta.prev_run_date})\n\n"
+
+    if not delta.has_changes:
+        md += "_No changes detected._\n\n"
+        return md
+
+    # New approvals (most actionable)
+    if delta.new_approvals:
+        md += f"### New Approvals ({len(delta.new_approvals)})\n\n"
+        rows = []
+        for e in delta.new_approvals:
+            rows.append([
+                e.approval_date or "",
+                e.drug_name or "",
+                e.sponsor or "",
+                e.nda_bla_number or "",
+            ])
+        rows.sort(key=lambda x: x[0], reverse=True)
+        md += _md_table(["Approval Date", "Drug", "Sponsor", "NDA/BLA"], rows)
+
+    # Status changes (most interesting for weekly monitoring)
+    if delta.status_changes:
+        md += f"### Status Changes ({len(delta.status_changes)})\n\n"
+        rows = []
+        for e in delta.status_changes:
+            rows.append([
+                e.nct_id or e.source_id,
+                e.drug_name or "",
+                e.sponsor or "",
+                e.phase or "",
+                e.old_status or "",
+                e.new_status or "",
+            ])
+        md += _md_table(["NCT / ID", "Drug", "Sponsor", "Phase", "Previous", "Current"], rows)
+
+    # New trials
+    if delta.new_trials:
+        md += f"### New Trials ({len(delta.new_trials)})\n\n"
+        rows = []
+        for e in delta.new_trials:
+            rows.append([
+                e.nct_id or e.source_id,
+                e.drug_name or "",
+                e.sponsor or "",
+                e.phase or "",
+                e.new_status or "",
+            ])
+        md += _md_table(["NCT / ID", "Drug", "Sponsor", "Phase", "Status"], rows)
+
+    # Dropped entries (compact summary)
+    if delta.dropped:
+        md += f"### Dropped from Window ({len(delta.dropped)})\n\n"
+        md += f"_{len(delta.dropped)} entries from the previous run are no longer in the current window._\n\n"
+
     return md
 
 
@@ -330,6 +392,7 @@ def _write_markdown(
     warnings: list[str],
     run_date: str,
     source_counts: dict,
+    delta: DiffReport | None = None,
 ) -> Path:
     reports_dir = Path(cfg["paths"]["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +412,10 @@ def _write_markdown(
     md += f"**Filters:** {', '.join(filters) if filters else 'none'}\n\n"
 
     md += _render_exec_summary(clusters, calendar)
-    md += "## 2. Pipeline Overview\n\n_See sections below for per-phase tables._\n\n"
+    if delta:
+        md += _render_delta(delta)
+    else:
+        md += "## 2. What Changed Since Last Run\n\n_Delta not available._\n\n"
     md += _render_pdufa_calendar(calendar, 90, "Disabled (see docs)")
     md += _render_watchlist(clusters)
     md += _render_gap_alerts(clusters)
@@ -373,6 +439,7 @@ def _write_json(
     warnings: list[str],
     run_date: str,
     source_counts: dict,
+    delta: DiffReport | None = None,
 ) -> Path:
     reports_dir = Path(cfg["paths"]["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -404,6 +471,7 @@ def generate_report(
     cfg: dict,
     warnings: list[str],
     source_counts: dict | None = None,
+    delta: DiffReport | None = None,
 ) -> Path:
     run_date = date.today().isoformat()
     output_format = cfg.get("output_format", "both")
@@ -411,7 +479,7 @@ def generate_report(
 
     last: Path = Path(cfg["paths"]["reports_dir"])
     if output_format in {"md", "both"}:
-        last = _write_markdown(clusters, calendar, cfg, warnings, run_date, source_counts)
+        last = _write_markdown(clusters, calendar, cfg, warnings, run_date, source_counts, delta=delta)
     if output_format in {"json", "both"}:
-        last = _write_json(clusters, calendar, cfg, warnings, run_date, source_counts)
+        last = _write_json(clusters, calendar, cfg, warnings, run_date, source_counts, delta=delta)
     return last
