@@ -15,17 +15,24 @@ log = logging.getLogger(__name__)
 _MODEL_DEFAULT = "claude-sonnet-4-20250514"
 
 
-def _get_client(cfg: dict):
-    """Return an Anthropic client or None if the SDK/key is unavailable."""
+def _get_client(cfg: dict, channel: str = "llm"):
+    """Return an Anthropic client or None if the SDK/key is unavailable.
+
+    The *channel* argument names the caller (e.g. "newsletter", "linkedin")
+    so the warning line makes it obvious which output is degrading.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        log.warning("ANTHROPIC_API_KEY not set — LLM content generation disabled")
+        log.warning(
+            "%s: ANTHROPIC_API_KEY not set — skipping LLM call, writing fallback output",
+            channel,
+        )
         return None
     try:
         import anthropic
         return anthropic.Anthropic(api_key=api_key)
     except ImportError:
-        log.warning("anthropic package not installed — run: pip install anthropic")
+        log.warning("%s: anthropic package not installed — run: pip install anthropic", channel)
         return None
 
 
@@ -75,7 +82,7 @@ def generate_newsletter_narrative(report: dict, cfg: dict) -> dict[str, str] | N
     Returns ``{"opening": "...", "approvals": "...", "pipeline": "...", "watch": "..."}``
     or ``None`` if the API is unavailable.
     """
-    client = _get_client(cfg)
+    client = _get_client(cfg, channel="newsletter")
     if not client:
         return None
 
@@ -170,9 +177,11 @@ Rules:
 def generate_linkedin_posts(report: dict, cfg: dict) -> list[dict] | None:
     """Generate LinkedIn posts for notable pipeline events.
 
-    Returns a list of post dicts or ``None`` if the API is unavailable.
+    Returns a list of post dicts, ``[]`` if no events match the filter, or
+    ``None`` if the API/SDK is unavailable. Callers use the distinction to
+    explain the output to the user.
     """
-    client = _get_client(cfg)
+    client = _get_client(cfg, channel="linkedin")
     if not client:
         return None
 
@@ -201,8 +210,15 @@ def generate_linkedin_posts(report: dict, cfg: dict) -> list[dict] | None:
                     "indication": rec.get("indication"),
                 })
 
+    log.info(
+        "linkedin: %d candidate events from %d clusters (approvals=%d, phase3_complete=%d)",
+        len(events),
+        len(report.get("clusters", [])),
+        sum(1 for e in events if e["event_type"] == "new_approval"),
+        sum(1 for e in events if e["event_type"] == "phase3_complete"),
+    )
     if not events:
-        log.info("no notable events for LinkedIn posts")
+        log.info("no notable events for LinkedIn posts — skipping LLM call")
         return []
 
     events = events[:max_posts]

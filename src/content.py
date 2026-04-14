@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 from datetime import date
 from pathlib import Path
 
@@ -119,9 +120,21 @@ def _generate_newsletter(report: dict, output_dir: Path, cfg: dict) -> Path:
 
     run_date = report.get("run_date", date.today().isoformat())
 
-    # Get LLM narrative (or fallback to empty strings)
+    # Get LLM narrative. When it fails, track WHY so the template can surface
+    # the degradation to the reader (silent fallback is a footgun).
     narrative = generate_newsletter_narrative(report, cfg)
+    fallback_reason: str | None = None
     if not narrative:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            fallback_reason = (
+                "ANTHROPIC_API_KEY is not set — export it and re-run with "
+                "--content-only to generate real narrative."
+            )
+        else:
+            fallback_reason = (
+                "LLM call failed (API error or response parse error) — "
+                "check the pipeline log for details."
+            )
         narrative = {
             "opening": "This week's FDA pipeline data is available below.",
             "approvals": "See the approvals table for details.",
@@ -152,6 +165,7 @@ def _generate_newsletter(report: dict, output_dir: Path, cfg: dict) -> Path:
     html = template.render(
         run_date=run_date,
         narrative=narrative,
+        fallback_reason=fallback_reason,
         approvals=approvals[:20],
         high_signal=high_signal[:15],
         source_counts=report.get("source_counts", {}),
@@ -160,24 +174,63 @@ def _generate_newsletter(report: dict, output_dir: Path, cfg: dict) -> Path:
 
     out = output_dir / f"newsletter_{run_date}.html"
     out.write_text(html, encoding="utf-8")
-    log.info("wrote newsletter: %s", out)
+    log.info(
+        "wrote newsletter: %s (narrative=%s)",
+        out,
+        "fallback" if fallback_reason else "llm",
+    )
     return out
 
 
 def _generate_linkedin(report: dict, output_dir: Path, cfg: dict) -> Path:
-    """Generate LinkedIn post drafts as JSON."""
+    """Generate LinkedIn post drafts as structured JSON.
+
+    Always writes an object (not a bare list) with ``status``, ``posts``,
+    and a human-readable ``note`` when ``status != "ok"``. This way an empty
+    output tells the user *why* — missing API key vs. no matching events vs.
+    API error — instead of silently shipping ``[]``.
+    """
     from .llm import generate_linkedin_posts as llm_linkedin
 
     run_date = report.get("run_date", date.today().isoformat())
-    posts = llm_linkedin(report, cfg)
+    result = llm_linkedin(report, cfg)
 
-    if posts is None:
+    if result is None:
+        # API/SDK unavailable — distinguish key vs everything else.
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            status = "no_api_key"
+            note = (
+                "ANTHROPIC_API_KEY is not set — export it and re-run with "
+                "--content-only to generate posts."
+            )
+        else:
+            status = "api_error"
+            note = "LLM call failed (API error or response parse error) — see pipeline log."
+        posts: list[dict] = []
+    elif not result:
+        status = "no_events"
+        note = (
+            "No notable events matched the LinkedIn filter this run "
+            "(new_approval or phase3_complete). Try widening the lookback window."
+        )
         posts = []
-        log.info("linkedin: no posts generated (LLM unavailable)")
+    else:
+        status = "ok"
+        note = None
+        posts = result
+
+    output: dict = {
+        "run_date": run_date,
+        "status": status,
+        "post_count": len(posts),
+        "posts": posts,
+    }
+    if note:
+        output["note"] = note
 
     out = output_dir / f"linkedin_{run_date}.json"
-    out.write_text(json.dumps(posts, indent=2), encoding="utf-8")
-    log.info("wrote linkedin posts: %s (%d posts)", out, len(posts))
+    out.write_text(json.dumps(output, indent=2), encoding="utf-8")
+    log.info("wrote linkedin posts: %s (status=%s, %d posts)", out, status, len(posts))
     return out
 
 

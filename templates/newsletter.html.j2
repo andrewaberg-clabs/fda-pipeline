@@ -20,6 +20,18 @@
     </td>
   </tr>
 
+  {% if fallback_reason %}
+  <!-- Fallback narrative banner -->
+  <tr>
+    <td style="padding:12px 32px;background-color:#fff5f5;border-left:4px solid #c53030;">
+      <p style="margin:0;font-size:13px;color:#742a2a;line-height:1.5;">
+        <strong>LLM narrative unavailable — using placeholder text.</strong><br>
+        <span style="color:#9b2c2c;">{{ fallback_reason }}</span>
+      </p>
+    </td>
+  </tr>
+  {% endif %}
+
   <!-- Opening -->
   <tr>
     <td style="padding:24px 32px 16px;">
