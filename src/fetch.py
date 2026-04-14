@@ -144,6 +144,251 @@ async def fetch_clinical_trials(cfg: dict, lookback_days: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Per-drug ClinicalTrials.gov enrichment
+# ---------------------------------------------------------------------------
+#
+# After the event-driven date-filtered fetch above, we re-query CT.gov scoped
+# to each drug name (no date filter) to recover that drug's full trial portfolio
+# — the wide indication coverage that commercial pharma trackers show. Cached
+# per-drug on disk so we aren't re-pulling Keytruda's 600-study history weekly.
+
+
+def _drug_slug(name: str) -> str:
+    """Filesystem-safe slug for cache filenames (lowercase, alnum + dash)."""
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return s or "unknown"
+
+
+def _drug_cache_path(cfg: dict, drug: str) -> Path:
+    data_dir = Path(cfg["paths"]["data_dir"])
+    cache_dir = data_dir / "drug_trials_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{_drug_slug(drug)}.json"
+
+
+def _load_drug_cache(cfg: dict, drug: str, ttl_days: int) -> list[dict] | None:
+    """Return cached studies if the cache file is fresh enough, else None."""
+    path = _drug_cache_path(cfg, drug)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+        fetched_at = datetime.fromisoformat(payload["fetched_at"]).date()
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return None
+    if (date.today() - fetched_at).days > ttl_days:
+        return None
+    return payload.get("studies") or []
+
+
+def _save_drug_cache(cfg: dict, drug: str, studies: list[dict]) -> None:
+    path = _drug_cache_path(cfg, drug)
+    payload = {
+        "drug": drug,
+        "fetched_at": date.today().isoformat(),
+        "study_count": len(studies),
+        "studies": studies,
+    }
+    path.write_text(json.dumps(payload, indent=2, default=str))
+
+
+async def fetch_trials_for_drug(
+    client: httpx.AsyncClient,
+    drug: str,
+    cfg: dict,
+    max_studies: int,
+) -> list[dict]:
+    """Query CT.gov v2 by intervention name with NO date filter.
+
+    Returns up to *max_studies* studies for the drug, paginated. This is the
+    per-drug counterpart to the date-windowed ``fetch_clinical_trials``: it's
+    used to fill in the full trial portfolio (and therefore the full indication
+    list) for drugs we already know about from event-driven sources.
+    """
+    src = cfg["sources"]["clinicaltrials"]
+    base_url = src["base_url"]
+    page_size = int(src["page_size"])
+
+    params = {
+        "query.intr": drug,
+        "pageSize": page_size,
+        "format": "json",
+    }
+
+    studies: list[dict] = []
+    page_token: str | None = None
+    page = 0
+    while True:
+        page += 1
+        if page_token:
+            params["pageToken"] = page_token
+        else:
+            params.pop("pageToken", None)
+
+        try:
+            data = await _get_json(client, base_url, params, cfg)
+        except _RETRYABLE_EXC as e:
+            log.warning("per-drug ct fetch failed for %r on page %d: %s", drug, page, e)
+            break
+
+        batch = data.get("studies", []) or []
+        studies.extend(batch)
+        page_token = data.get("nextPageToken")
+        if not page_token or not batch or len(studies) >= max_studies:
+            break
+
+    return studies[:max_studies]
+
+
+def _extract_enrichment_drug_names(
+    ct_studies: list[dict],
+    openfda_results: list[dict],
+    cap: int,
+) -> list[str]:
+    """Build the de-duplicated list of drug names worth fetching full corpora for.
+
+    Source priority — openFDA brand > openFDA generic > CT.gov interventions —
+    so when several names canonicalize to the same drug we keep the most
+    "official" form for the API query.
+    """
+    # Local import to avoid widening this module's import surface for one helper.
+    from .match import _canonicalize_name
+
+    seen_canonical: set[str] = set()
+    ordered: list[str] = []
+
+    def _add(name: str | None) -> None:
+        if not name:
+            return
+        canonical = _canonicalize_name(name)
+        if not canonical or canonical in seen_canonical:
+            return
+        seen_canonical.add(canonical)
+        ordered.append(name.strip())
+
+    # openFDA brand_name first (most "official" identifier)
+    for result in openfda_results:
+        for product in result.get("products") or []:
+            _add(product.get("brand_name"))
+    # openFDA generic / active ingredient
+    for result in openfda_results:
+        for product in result.get("products") or []:
+            for ai in product.get("active_ingredients") or []:
+                _add(ai.get("name"))
+    # CT.gov interventions (drug + biological)
+    for study in ct_studies:
+        ps = study.get("protocolSection") or {}
+        arms = ps.get("armsInterventionsModule") or {}
+        for interv in arms.get("interventions") or []:
+            if str(interv.get("type", "")).upper() in {"DRUG", "BIOLOGICAL"}:
+                _add(interv.get("name"))
+
+    if cap and len(ordered) > cap:
+        log.info(
+            "per-drug enrichment: capping %d candidate drugs at max_drugs=%d",
+            len(ordered),
+            cap,
+        )
+        ordered = ordered[:cap]
+    return ordered
+
+
+async def _enrich_with_per_drug_trials(
+    ct_studies: list[dict],
+    openfda_results: list[dict],
+    cfg: dict,
+) -> list[dict]:
+    """Run per-drug CT.gov fetches for every drug in this run, merge into ct_studies.
+
+    Dedupes the final list by NCT ID. Honours cache TTL, max_drugs, and
+    max_studies_per_drug knobs from config.yaml.
+    """
+    enrich_cfg = (cfg["sources"]["clinicaltrials"] or {}).get("per_drug_enrichment") or {}
+    if not enrich_cfg.get("enabled", True):
+        log.info("per-drug enrichment disabled in config — skipping")
+        return ct_studies
+
+    max_drugs = int(enrich_cfg.get("max_drugs", 200))
+    max_per_drug = int(enrich_cfg.get("max_studies_per_drug", 500))
+    ttl_days = int(enrich_cfg.get("cache_ttl_days", 7))
+    pace = float(enrich_cfg.get("pace_seconds", 0.2))
+
+    drugs = _extract_enrichment_drug_names(ct_studies, openfda_results, max_drugs)
+    if not drugs:
+        log.info("per-drug enrichment: no drug names extracted — skipping")
+        return ct_studies
+
+    log.info(
+        "per-drug enrichment: fetching CT.gov corpus for %d drugs (cache_ttl=%dd, max_per_drug=%d)",
+        len(drugs),
+        ttl_days,
+        max_per_drug,
+    )
+
+    timeout = httpx.Timeout(float(cfg["http"]["timeout_seconds"]))
+    headers = {"User-Agent": cfg["http"]["user_agent"]}
+
+    cache_hits = 0
+    fetched_drugs = 0
+    fetched_studies_total = 0
+    new_studies: list[dict] = []
+
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+        for drug in drugs:
+            cached = _load_drug_cache(cfg, drug, ttl_days)
+            if cached is not None:
+                cache_hits += 1
+                new_studies.extend(cached)
+                continue
+            try:
+                studies = await fetch_trials_for_drug(client, drug, cfg, max_per_drug)
+            except Exception as e:  # noqa: BLE001
+                log.warning("per-drug fetch failed for %r: %s — continuing", drug, e)
+                continue
+            fetched_drugs += 1
+            fetched_studies_total += len(studies)
+            _save_drug_cache(cfg, drug, studies)
+            new_studies.extend(studies)
+            if pace:
+                await asyncio.sleep(pace)
+
+    # Merge: dedupe by NCT ID, preferring the existing event-driven study
+    # (it has the freshest LastUpdatePostDate-driven status).
+    by_nct: dict[str, dict] = {}
+    extras: list[dict] = []  # studies with no NCT ID (rare)
+    for study in ct_studies:
+        nct = ((study.get("protocolSection") or {}).get("identificationModule") or {}).get("nctId")
+        if nct:
+            by_nct[nct] = study
+        else:
+            extras.append(study)
+    pre_count = len(by_nct) + len(extras)
+    added = 0
+    for study in new_studies:
+        nct = ((study.get("protocolSection") or {}).get("identificationModule") or {}).get("nctId")
+        if not nct:
+            extras.append(study)
+            added += 1
+            continue
+        if nct not in by_nct:
+            by_nct[nct] = study
+            added += 1
+
+    merged = list(by_nct.values()) + extras
+    log.info(
+        "per-drug enrichment done: %d cache_hits, %d drugs fetched (%d studies), "
+        "merged %d → %d ct studies (+%d new)",
+        cache_hits,
+        fetched_drugs,
+        fetched_studies_total,
+        pre_count,
+        len(merged),
+        added,
+    )
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # openFDA drugsfda
 # ---------------------------------------------------------------------------
 
@@ -446,6 +691,16 @@ async def _fetch_all_async(cfg: dict, dry_run: bool = False) -> dict:
 
     ct, openfda_results = await asyncio.gather(ct_task, of_task)
     pdufa_rows: list[dict] = []
+
+    # Per-drug enrichment: re-query CT.gov by drug name (no date filter) for
+    # every drug surfaced in this run. This is what brings in the full
+    # indication portfolio per drug. Failures here are non-fatal — we already
+    # have the date-windowed studies above.
+    try:
+        ct = await _enrich_with_per_drug_trials(ct, openfda_results, cfg)
+    except Exception as e:  # noqa: BLE001
+        log.warning("per-drug enrichment failed wholesale: %s — using event-driven CT only", e)
+        warnings.append(f"per-drug enrichment failed: {e}")
 
     _dump_raw(cfg, "clinicaltrials", ct)
     _dump_raw(cfg, "openfda", openfda_results)

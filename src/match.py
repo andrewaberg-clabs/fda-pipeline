@@ -44,7 +44,39 @@ class MatchCluster:
             "records": [r.to_dict() for r in self.records],
             "match_confidence": round(self.match_confidence, 2),
             "flags": self.flags,
+            "indications_by_phase": self.indications_by_phase(),
         }
+
+    def indications_by_phase(self) -> dict[str, list[str]]:
+        """Aggregate every distinct indication across the cluster, bucketed by stage.
+
+        Buckets:
+          - "APPROVED": from openFDA records flagged as new_approval
+          - "PHASE3" / "PHASE2" / "PHASE1": from CT.gov records
+          - "UNKNOWN": records with no phase (e.g. PDUFA rows, openFDA without
+            new_approval signal)
+
+        CT.gov stores conditions as a comma-joined string in
+        ``NormalizedRecord.indication`` (see normalize.py); we split + dedupe
+        case-insensitively here so a drug with three trials all targeting
+        "Non-small cell lung cancer" appears once, and the final list is what
+        the competitor's "Indication" column shows.
+        """
+        # phase_key -> {lowered: original_first_seen}
+        buckets: dict[str, dict[str, str]] = {}
+        for r in self.records:
+            if not r.indication:
+                continue
+            if r.source == "openfda" and r.signal_type == "new_approval":
+                phase_key = "APPROVED"
+            else:
+                phase_key = r.phase or "UNKNOWN"
+            for raw in r.indication.split(","):
+                cleaned = raw.strip()
+                if not cleaned:
+                    continue
+                buckets.setdefault(phase_key, {}).setdefault(cleaned.lower(), cleaned)
+        return {k: sorted(v.values(), key=str.lower) for k, v in buckets.items()}
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,16 @@ sources:
       - COMPLETED
       - TERMINATED
       - WITHDRAWN
+    # Per-drug enrichment: after the event-driven fetch, query CT.gov by drug
+    # intervention name (no date filter) for every drug appearing in this run.
+    # This is what lets the report list a drug's *full* indication portfolio
+    # (e.g. Keytruda's 16 indications) instead of just the trials updated this week.
+    per_drug_enrichment:
+      enabled: true
+      cache_ttl_days: 7         # reuse cached per-drug corpus within this window
+      max_drugs: 200            # cap drugs to enrich per run (avoids API blowup)
+      max_studies_per_drug: 500 # pagination cap per drug
+      pace_seconds: 0.2         # sleep between per-drug requests
 
   openfda:
     base_url: "https://api.fda.gov/drug/drugsfda.json"

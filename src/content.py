@@ -28,6 +28,15 @@ _CSV_COLUMNS = [
     "sources",
     "high_signal",
     "match_confidence",
+    # Cluster-level indication aggregation (same value repeated across all rows
+    # of a cluster). Mirrors the dense "Indication" column commercial pharma
+    # trackers show — one drug, every distinct indication across every trial,
+    # bucketed by stage.
+    "indications_approved",
+    "indications_phase3",
+    "indications_phase2",
+    "indications_phase1",
+    "indication_count",
     "source",
     "source_id",
     "drug_name",
@@ -52,6 +61,18 @@ def _generate_csv(report: dict, output_dir: Path) -> Path:
 
     rows: list[dict] = []
     for cluster in report.get("clusters", []):
+        ibp = cluster.get("indications_by_phase", {}) or {}
+        # Flatten each phase bucket into a single semicolon-joined cell. Use
+        # "; " (not ",") because the indications themselves may contain commas
+        # and we want the CSV to round-trip cleanly through Excel/BI tools.
+        indications_approved = "; ".join(ibp.get("APPROVED", []))
+        indications_phase3 = "; ".join(ibp.get("PHASE3", []))
+        indications_phase2 = "; ".join(ibp.get("PHASE2", []))
+        indications_phase1 = "; ".join(ibp.get("PHASE1", []))
+        # Total distinct indications across all phases — useful one-glance metric
+        # for "how broad is this drug's portfolio".
+        indication_count = sum(len(v) for v in ibp.values())
+
         cluster_base = {
             "cluster_id": cluster.get("cluster_id", ""),
             "canonical_name": cluster.get("canonical_name", ""),
@@ -59,6 +80,11 @@ def _generate_csv(report: dict, output_dir: Path) -> Path:
             "sources": ",".join(cluster.get("sources", [])),
             "high_signal": cluster.get("flags", {}).get("high_signal", False),
             "match_confidence": cluster.get("match_confidence", ""),
+            "indications_approved": indications_approved,
+            "indications_phase3": indications_phase3,
+            "indications_phase2": indications_phase2,
+            "indications_phase1": indications_phase1,
+            "indication_count": indication_count,
         }
         for rec in cluster.get("records", []):
             row = {**cluster_base}
