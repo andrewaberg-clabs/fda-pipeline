@@ -22,21 +22,24 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 # ---------------------------------------------------------------------------
 
 _CSV_COLUMNS = [
+    # Cluster-level fields (same value across all rows of a cluster)
     "cluster_id",
     "canonical_name",
     "canonical_sponsor",
     "sources",
     "high_signal",
     "match_confidence",
-    # Cluster-level indication aggregation (same value repeated across all rows
-    # of a cluster). Mirrors the dense "Indication" column commercial pharma
-    # trackers show — one drug, every distinct indication across every trial,
-    # bucketed by stage.
+    "latest_stage",
+    "routes",
+    "mechanisms_of_action",
+    "pharmacologic_classes",
+    "tags",
     "indications_approved",
     "indications_phase3",
     "indications_phase2",
     "indications_phase1",
     "indication_count",
+    # Record-level fields
     "source",
     "source_id",
     "drug_name",
@@ -47,10 +50,16 @@ _CSV_COLUMNS = [
     "approval_date",
     "nct_id",
     "nda_bla_number",
+    "submission_type",
     "therapeutic_area",
     "indication",
     "signal_type",
     "completion_date",
+    "route",
+    "mechanism_of_action",
+    "pharmacologic_class",
+    "review_priority",
+    "submission_class",
 ]
 
 
@@ -80,6 +89,11 @@ def _generate_csv(report: dict, output_dir: Path) -> Path:
             "sources": ",".join(cluster.get("sources", [])),
             "high_signal": cluster.get("flags", {}).get("high_signal", False),
             "match_confidence": cluster.get("match_confidence", ""),
+            "latest_stage": cluster.get("latest_stage", ""),
+            "routes": "; ".join(cluster.get("routes") or []),
+            "mechanisms_of_action": "; ".join(cluster.get("mechanisms_of_action") or []),
+            "pharmacologic_classes": "; ".join(cluster.get("pharmacologic_classes") or []),
+            "tags": "; ".join(cluster.get("tags") or []),
             "indications_approved": indications_approved,
             "indications_phase3": indications_phase3,
             "indications_phase2": indications_phase2,

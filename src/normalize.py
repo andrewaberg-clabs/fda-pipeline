@@ -36,6 +36,11 @@ class NormalizedRecord:
     completion_date: Optional[str] = None
     results_posted: Optional[bool] = None
     signal_type: Optional[str] = None
+    route: Optional[str] = None
+    mechanism_of_action: Optional[str] = None
+    pharmacologic_class: Optional[str] = None
+    review_priority: Optional[str] = None
+    submission_class: Optional[str] = None
     raw_ref: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -235,6 +240,7 @@ def normalize_openfda(result: dict, lookback_start: str | None = None) -> list[N
     generic = None
     dosage_forms: list[str] = []
     pharmacologic_classes: list[str] = []
+    routes: list[str] = []
     for p in products:
         if not brand:
             brand = _clean(p.get("brand_name"))
@@ -244,6 +250,26 @@ def normalize_openfda(result: dict, lookback_start: str | None = None) -> list[N
             dosage_forms.append(str(p["dosage_form"]))
         if isinstance(p.get("pharmacologic_class"), list):
             pharmacologic_classes.extend(p["pharmacologic_class"])
+        route_val = _clean(p.get("route"))
+        if route_val and route_val not in routes:
+            routes.append(route_val)
+
+    # Extract mechanism of action and established pharmacologic class from the
+    # openfda harmonized block (more structured than products[].pharmacologic_class)
+    # and fall back to the product-level pharmacologic_class strings.
+    openfda_block = result.get("openfda") or {}
+    moa_raw = openfda_block.get("pharm_class_moa") or []
+    epc_raw = openfda_block.get("pharm_class_epc") or []
+    mechanism_of_action = "; ".join(moa_raw) if moa_raw else None
+    pharmacologic_class_str = "; ".join(epc_raw) if epc_raw else None
+    if not mechanism_of_action and pharmacologic_classes:
+        moa_items = [c for c in pharmacologic_classes if "[MOA]" in c.upper()]
+        mechanism_of_action = "; ".join(moa_items) if moa_items else None
+    if not pharmacologic_class_str and pharmacologic_classes:
+        epc_items = [c for c in pharmacologic_classes if "[EPC]" in c.upper()]
+        pharmacologic_class_str = "; ".join(epc_items) if epc_items else None
+
+    route_str = "; ".join(routes) if routes else None
 
     submission_type = None
     if app_num_raw:
@@ -266,6 +292,8 @@ def normalize_openfda(result: dict, lookback_start: str | None = None) -> list[N
         if lookback_start and approval_date and approval_date < lookback_start:
             continue
         sub_type = _clean(sub.get("submission_type")) or submission_type
+        review_priority = _clean(sub.get("review_priority"))
+        submission_class = _clean(sub.get("submission_class_code_description"))
         rec = NormalizedRecord(
             source="openfda",
             source_id=f"{app_num or 'UNKNOWN'}:{sub.get('submission_number', '')}",
@@ -277,6 +305,11 @@ def normalize_openfda(result: dict, lookback_start: str | None = None) -> list[N
             nda_bla_number=app_num,
             submission_type=sub_type,
             therapeutic_area=therapeutic_area,
+            route=route_str,
+            mechanism_of_action=mechanism_of_action,
+            pharmacologic_class=pharmacologic_class_str,
+            review_priority=review_priority,
+            submission_class=submission_class,
             raw_ref={"application_number": app_num_raw, "submission_number": sub.get("submission_number")},
         )
         out.append(rec)

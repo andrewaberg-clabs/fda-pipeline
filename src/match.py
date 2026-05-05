@@ -45,7 +45,69 @@ class MatchCluster:
             "match_confidence": round(self.match_confidence, 2),
             "flags": self.flags,
             "indications_by_phase": self.indications_by_phase(),
+            "latest_stage": self._latest_stage(),
+            "routes": self._dedup_field("route"),
+            "mechanisms_of_action": self._dedup_field("mechanism_of_action"),
+            "pharmacologic_classes": self._dedup_field("pharmacologic_class"),
+            "tags": self._collect_tags(),
         }
+
+    def _latest_stage(self) -> str:
+        """Compute the most advanced stage this drug has reached."""
+        stage_rank = {"PHASE1": 1, "PHASE2": 2, "PHASE3": 3}
+        has_approval = any(
+            r.source == "openfda" and r.signal_type == "new_approval"
+            for r in self.records
+        )
+        if has_approval:
+            return "APPROVED"
+        best = 0
+        best_label = "UNKNOWN"
+        for r in self.records:
+            if r.phase and stage_rank.get(r.phase, 0) > best:
+                best = stage_rank[r.phase]
+                best_label = r.phase
+        return best_label
+
+    def _dedup_field(self, attr: str) -> list[str]:
+        """Collect distinct non-None values for a field across all records."""
+        seen: dict[str, str] = {}
+        for r in self.records:
+            val = getattr(r, attr, None)
+            if not val:
+                continue
+            for part in val.split("; "):
+                part = part.strip()
+                if part:
+                    seen.setdefault(part.lower(), part)
+        return sorted(seen.values(), key=str.lower)
+
+    def _collect_tags(self) -> list[str]:
+        """Build a list of notable regulatory/classification tags from records."""
+        tags: set[str] = set()
+        for r in self.records:
+            if r.review_priority and r.review_priority.upper() == "PRIORITY":
+                tags.add("Priority Review")
+            if r.submission_class:
+                sc = r.submission_class
+                if "new molecular entity" in sc.lower():
+                    tags.add("New Molecular Entity")
+                elif "new active ingredient" in sc.lower():
+                    tags.add("New Active Ingredient")
+                elif "new indication" in sc.lower():
+                    tags.add("New Indication")
+                elif "new dosage form" in sc.lower():
+                    tags.add("New Dosage Form")
+            if r.submission_type:
+                if r.submission_type.upper() == "BLA":
+                    tags.add("Biologic")
+        if self.flags.get("high_signal"):
+            tags.add("Multi-Source Match")
+        if self.flags.get("watch_list"):
+            tags.add("PDUFA Watch")
+        if self.flags.get("gap_alert"):
+            tags.add("Gap Alert")
+        return sorted(tags)
 
     def indications_by_phase(self) -> dict[str, list[str]]:
         """Aggregate every distinct indication across the cluster, bucketed by stage.
