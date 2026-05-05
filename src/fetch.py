@@ -453,26 +453,22 @@ async def fetch_openfda_drugsfda(cfg: dict, lookback_days: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 COLUMN_ALIASES: dict[str, list[str]] = {
-    "drug_name": ["drug", "proprietary", "brand", "tradename", "product", "catalyst"],
+    "drug_name": [
+        "drug", "proprietary", "brand", "tradename", "product", "catalyst",
+        "drug name", "compound",
+    ],
     "generic_name": [
-        "generic",
-        "established",
-        "active ingredient",
-        "nonproprietary",
-        "drug class",
+        "generic", "established", "active ingredient", "nonproprietary",
+        "drug class", "generic name", "molecule",
     ],
-    "applicant": ["applicant", "sponsor", "company", "ticker"],
-    "nda_bla_number": ["application", "nda", "bla", "app number"],
-    "submission_type": ["type", "submission", "stage"],
+    "applicant": ["applicant", "sponsor", "company", "ticker", "firm"],
+    "nda_bla_number": ["application", "nda", "bla", "app number", "application number"],
+    "submission_type": ["type", "submission", "stage", "action type"],
     "pdufa_date": [
-        "pdufa",
-        "target action",
-        "goal date",
-        "action date",
-        "catalyst date",
-        "date",
+        "pdufa", "target action", "goal date", "action date", "catalyst date",
+        "date", "pdufa date", "fda date", "decision date", "target date",
     ],
-    "indication": ["indication", "proposed indication", "use", "disease"],
+    "indication": ["indication", "proposed indication", "use", "disease", "therapeutic area"],
     "submission_date": ["submission date", "received", "filed"],
 }
 
@@ -682,15 +678,9 @@ async def _fetch_all_async(cfg: dict, dry_run: bool = False) -> dict:
 
     ct_task = _safe(fetch_clinical_trials(cfg, lookback), "clinicaltrials")
     of_task = _safe(fetch_openfda_drugsfda(cfg, lookback), "openfda")
+    pdufa_task = _safe(fetch_pdufa_page(cfg), "pdufa")
 
-    # TODO(pdufa): source disabled — BioPharmCatalyst is a JS-rendered SPA and
-    # fda.gov has no forward-looking PDUFA page. Re-enable here by restoring a
-    # fetch_pdufa_page(cfg) task once a replacement source is wired up (EDGAR
-    # 8-K, PRNewswire RSS, or a manual YAML watchlist — see plan file Phase 2).
-    log.info("pdufa source disabled — see TODO(pdufa) in src/fetch.py")
-
-    ct, openfda_results = await asyncio.gather(ct_task, of_task)
-    pdufa_rows: list[dict] = []
+    ct, openfda_results, pdufa_rows = await asyncio.gather(ct_task, of_task, pdufa_task)
 
     # Per-drug enrichment: re-query CT.gov by drug name (no date filter) for
     # every drug surfaced in this run. This is what brings in the full

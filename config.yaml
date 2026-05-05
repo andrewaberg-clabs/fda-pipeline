@@ -60,10 +60,6 @@ sources:
     page_size: 100
 
   pdufa:
-    # FDA.gov does not publish a forward-looking PDUFA calendar. BioPharmCatalyst
-    # maintains the most comprehensive public PDUFA/FDA calendar; their HTML pages
-    # are server-rendered (see github.com/criminosis/fda-calendar-scraper for a
-    # working reference implementation).
-    pdufa_url: "https://www.biopharmcatalyst.com/calendars/pdufa-calendar"
+    pdufa_url: "https://www.fdatracker.com/fda-calendar/"
     approvals_url: "https://www.biopharmcatalyst.com/calendars/fda-calendar"
     rss_fallback_url: "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"
